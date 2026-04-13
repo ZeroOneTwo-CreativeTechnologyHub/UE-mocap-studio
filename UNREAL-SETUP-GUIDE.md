@@ -422,12 +422,26 @@ Open the **Event Graph** tab in the Animation Blueprint.
 
 From **Event Blueprint Update Animation:**
 
-1. Use **Try Get Pawn Owner** to get the owning actor.
-2. From the pawn owner, use **Get All Actors of Class** with class set to `MoCapWebSocket`. Get the first result.
-3. Drag `MoCapSocket` from the My Blueprint panel into the graph, select **Set**, and connect the result from step 2 into it.
-4. From the `MoCapSocket` variable (drag it in again, select **Get**), pull off wires to read:
-   - **bIsIdle** into your local `bIsIdle` variable (use a Set node)
-   - **BoneAngles** into your local `BoneAngles` variable (use a Set node)
+1. Drag from the white execution pin on **Event Blueprint Update Animation** and release in empty space. A search menu appears. Type `Get All Actors of Class` and select it. This is a global function, not a method on any actor, so you must start from empty space or an execution pin, not from another node's data output.
+2. On the **Get All Actors of Class** node, click the **Actor Class** dropdown and type `MoCapWebSocket`. Select it.
+3. Drag from the **Out Actors** pin and type `Get`. Select **Get (a copy)**. Leave the index at 0.
+4. Drag from the output of the Get node and type `Cast to MoCapWebSocket`. This gives you a typed reference with access to all the pose data.
+5. Drag your `MoCapSocket` variable from the My Blueprint panel into the graph and select **Set**. Connect the cast output (the blue "As MoCap Web Socket" pin) into the Set node. Connect the execution pin from the Cast node to the Set node.
+6. Now read the data: drag `MoCapSocket` into the graph again (select **Get** this time). From it, pull off:
+   - **Get bIsIdle** and wire it into a **Set bIsIdle** node for your local variable.
+   - **Get BoneAngles** and wire it into a **Set BoneAngles** node for your local variable.
+
+The complete chain looks like this:
+
+```
+Event Blueprint Update Animation
+  > Get All Actors of Class (MoCapWebSocket)
+  > Get [0]
+  > Cast to MoCapWebSocket
+  > Set MoCapSocket
+  > Set bIsIdle (from MoCapSocket.bIsIdle)
+  > Set BoneAngles (from MoCapSocket.BoneAngles)
+```
 
 This runs every tick, keeping the animation data in sync with the latest pose from the camera.
 
