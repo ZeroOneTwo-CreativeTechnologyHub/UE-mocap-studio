@@ -1,0 +1,1137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MoCap Studio — Live Pose Tracking</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Outfit:wght@300;400;600;700&display=swap');
+
+  :root {
+    --bg-deep: #0a0b0f;
+    --bg-panel: #12131a;
+    --bg-card: #1a1b25;
+    --border: #2a2b38;
+    --border-glow: #3a3b50;
+    --text-primary: #e8e9f0;
+    --text-secondary: #8889a0;
+    --text-dim: #55566a;
+    --accent-cyan: #00e5ff;
+    --accent-magenta: #ff00aa;
+    --accent-green: #00ff88;
+    --accent-orange: #ff8800;
+    --accent-purple: #aa55ff;
+    --skeleton-bone: #00e5ff;
+    --skeleton-joint: #ff00aa;
+    --skeleton-face: #aa55ff;
+    --glow-cyan: 0 0 20px rgba(0,229,255,0.3);
+    --glow-magenta: 0 0 20px rgba(255,0,170,0.3);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    font-family: 'Outfit', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  .app-container {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    grid-template-rows: auto 1fr;
+    gap: 0;
+    height: 100vh;
+    max-height: 100vh;
+  }
+
+  /* ─── Header ─── */
+  header {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 24px;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+    z-index: 10;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-icon {
+    width: 32px; height: 32px;
+    background: linear-gradient(135deg, var(--accent-cyan), var(--accent-magenta));
+    border-radius: 8px;
+    display: grid; place-items: center;
+    font-size: 16px;
+  }
+
+  .logo h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    background: linear-gradient(90deg, var(--accent-cyan), var(--accent-magenta));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .logo span {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 1px;
+  }
+
+  .header-status {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .status-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+  }
+
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    transition: background 0.3s;
+  }
+
+  .status-dot.active { background: var(--accent-green); box-shadow: 0 0 8px rgba(0,255,136,0.5); }
+  .status-dot.warn { background: var(--accent-orange); box-shadow: 0 0 8px rgba(255,136,0,0.5); }
+  .status-dot.error { background: #ff3355; box-shadow: 0 0 8px rgba(255,51,85,0.5); }
+
+  /* ─── Viewport ─── */
+  .viewport {
+    position: relative;
+    background: #000;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .viewport video {
+    position: absolute;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    transform: scaleX(-1);
+  }
+
+  .viewport canvas {
+    position: absolute;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    z-index: 2;
+    transform: scaleX(-1);
+  }
+
+  .viewport-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+  }
+
+  .corner-bracket {
+    position: absolute;
+    width: 24px; height: 24px;
+    border-color: var(--accent-cyan);
+    opacity: 0.5;
+  }
+  .corner-bracket.tl { top: 16px; left: 16px; border-top: 2px solid; border-left: 2px solid; }
+  .corner-bracket.tr { top: 16px; right: 16px; border-top: 2px solid; border-right: 2px solid; }
+  .corner-bracket.bl { bottom: 16px; left: 16px; border-bottom: 2px solid; border-left: 2px solid; }
+  .corner-bracket.br { bottom: 16px; right: 16px; border-bottom: 2px solid; border-right: 2px solid; }
+
+  .fps-counter {
+    position: absolute;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--accent-green);
+    background: rgba(0,0,0,0.6);
+    padding: 3px 12px;
+    border-radius: 4px;
+    z-index: 5;
+  }
+
+  .no-person-badge {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    color: var(--accent-orange);
+    background: rgba(0,0,0,0.7);
+    padding: 10px 24px;
+    border-radius: 8px;
+    border: 1px solid rgba(255,136,0,0.3);
+    z-index: 5;
+    display: none;
+    animation: pulse-badge 2s infinite;
+  }
+
+  @keyframes pulse-badge {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .start-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(10,11,15,0.92);
+    backdrop-filter: blur(10px);
+    gap: 20px;
+    transition: opacity 0.5s;
+  }
+
+  .start-overlay.hidden { opacity: 0; pointer-events: none; }
+
+  .start-btn {
+    padding: 14px 40px;
+    border: 2px solid var(--accent-cyan);
+    background: transparent;
+    color: var(--accent-cyan);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s;
+  }
+
+  .start-btn:hover {
+    background: var(--accent-cyan);
+    color: var(--bg-deep);
+    box-shadow: var(--glow-cyan);
+  }
+
+  .start-subtitle {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* ─── Sidebar ─── */
+  .sidebar {
+    background: var(--bg-panel);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .sidebar-section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar-section h3 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+  }
+
+  /* Connection panel */
+  .connection-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .connection-row input {
+    flex: 1;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .connection-row input:focus { border-color: var(--accent-cyan); }
+
+  .btn-connect {
+    padding: 7px 14px;
+    border: 1px solid var(--accent-cyan);
+    background: transparent;
+    color: var(--accent-cyan);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s;
+  }
+
+  .btn-connect:hover { background: rgba(0,229,255,0.1); }
+  .btn-connect.connected {
+    border-color: var(--accent-green);
+    color: var(--accent-green);
+  }
+
+  .protocol-info {
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.5;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .protocol-info code {
+    background: var(--bg-card);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 10px;
+    color: var(--accent-cyan);
+  }
+
+  /* Skeleton map */
+  .skeleton-map {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+
+  .joint-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: var(--bg-card);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-secondary);
+    transition: all 0.15s;
+  }
+
+  .joint-item.tracked {
+    color: var(--text-primary);
+    border-left: 2px solid var(--accent-cyan);
+  }
+
+  .joint-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    transition: background 0.2s;
+  }
+
+  .joint-item.tracked .joint-dot {
+    background: var(--accent-cyan);
+    box-shadow: 0 0 6px rgba(0,229,255,0.5);
+  }
+
+  /* Controls */
+  .control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .control-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .control-row label {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .toggle {
+    position: relative;
+    width: 38px; height: 20px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.3s;
+  }
+
+  .toggle.active {
+    background: rgba(0,229,255,0.15);
+    border-color: var(--accent-cyan);
+  }
+
+  .toggle::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    transition: all 0.3s;
+  }
+
+  .toggle.active::after {
+    left: 20px;
+    background: var(--accent-cyan);
+    box-shadow: 0 0 6px rgba(0,229,255,0.5);
+  }
+
+  .slider-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .slider-row .label-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+  }
+
+  .slider-row .label-row span:first-child { color: var(--text-secondary); }
+  .slider-row .label-row span:last-child { color: var(--accent-cyan); font-family: 'JetBrains Mono', monospace; }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 4px;
+    background: var(--bg-card);
+    border-radius: 2px;
+    outline: none;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--accent-cyan);
+    cursor: pointer;
+    box-shadow: 0 0 6px rgba(0,229,255,0.4);
+  }
+
+  /* Data stream */
+  .data-stream {
+    background: var(--bg-card);
+    border-radius: 6px;
+    padding: 10px;
+    max-height: 140px;
+    overflow-y: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    line-height: 1.6;
+    color: var(--text-dim);
+  }
+
+  .data-stream::-webkit-scrollbar { width: 4px; }
+  .data-stream::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .stream-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stream-line .key { color: var(--accent-purple); }
+  .stream-line .val { color: var(--accent-green); }
+
+  /* Recording */
+  .btn-record {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid var(--accent-magenta);
+    background: transparent;
+    color: var(--accent-magenta);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .btn-record:hover { background: rgba(255,0,170,0.1); }
+  .btn-record.recording {
+    background: rgba(255,0,170,0.15);
+    animation: rec-pulse 1.5s infinite;
+  }
+
+  .rec-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--accent-magenta);
+  }
+
+  @keyframes rec-pulse {
+    0%, 100% { box-shadow: none; }
+    50% { box-shadow: var(--glow-magenta); }
+  }
+
+  .btn-export {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-top: 6px;
+  }
+
+  .btn-export:hover { border-color: var(--text-secondary); color: var(--text-primary); }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    .app-container {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto 50vh 1fr;
+    }
+    .sidebar { max-height: 50vh; }
+  }
+
+  /* Scrollbar */
+  .sidebar::-webkit-scrollbar { width: 4px; }
+  .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* Scan line effect */
+  .viewport::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      transparent 0px, transparent 2px,
+      rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px
+    );
+    z-index: 4;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div class="app-container">
+  <!-- Header -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon">⬡</div>
+      <div>
+        <h1>MoCap Studio</h1>
+        <span>Pose Tracking → Unreal Engine</span>
+      </div>
+    </div>
+    <div class="header-status">
+      <div class="status-pill">
+        <div class="status-dot" id="camDot"></div>
+        <span id="camStatus">Camera Off</span>
+      </div>
+      <div class="status-pill">
+        <div class="status-dot" id="wsDot"></div>
+        <span id="wsStatus">UE Disconnected</span>
+      </div>
+      <div class="status-pill">
+        <div class="status-dot" id="poseDot"></div>
+        <span id="poseStatus">No Pose</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Viewport -->
+  <div class="viewport">
+    <video id="webcam" autoplay playsinline></video>
+    <canvas id="poseCanvas"></canvas>
+    <div class="viewport-overlay">
+      <div class="corner-bracket tl"></div>
+      <div class="corner-bracket tr"></div>
+      <div class="corner-bracket bl"></div>
+      <div class="corner-bracket br"></div>
+    </div>
+    <div class="fps-counter" id="fpsCounter">-- FPS</div>
+    <div class="no-person-badge" id="noPerson">⚠ NO PERSON DETECTED — IDLE POSE ACTIVE</div>
+
+    <div class="start-overlay" id="startOverlay">
+      <div class="logo-icon" style="width:64px;height:64px;font-size:32px;border-radius:16px;">⬡</div>
+      <button class="start-btn" id="startBtn">▶ Start Capture</button>
+      <div class="start-subtitle">Requires webcam access • MediaPipe Pose</div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <!-- UE Connection -->
+    <div class="sidebar-section">
+      <h3>⬡ Unreal Engine Link</h3>
+      <div class="connection-row">
+        <input type="text" id="wsUrl" value="ws://localhost:8080" placeholder="ws://host:port">
+        <button class="btn-connect" id="btnConnect" onclick="toggleWebSocket()">Connect</button>
+      </div>
+      <div class="protocol-info">
+        Sends JSON at <code id="sendRateLabel">30</code> fps<br>
+        Format: <code>{ landmarks[], visibility, timestamp }</code><br>
+        Idle signal: <code>{ idle: true }</code>
+      </div>
+    </div>
+
+    <!-- Joint Map -->
+    <div class="sidebar-section">
+      <h3>◈ Tracked Joints</h3>
+      <div class="skeleton-map" id="jointMap"></div>
+    </div>
+
+    <!-- Controls -->
+    <div class="sidebar-section">
+      <h3>⚙ Settings</h3>
+      <div class="control-group">
+        <div class="control-row">
+          <label>Show Skeleton</label>
+          <div class="toggle active" id="togSkeleton" onclick="toggleOption(this,'showSkeleton')"></div>
+        </div>
+        <div class="control-row">
+          <label>Show Joints</label>
+          <div class="toggle active" id="togJoints" onclick="toggleOption(this,'showJoints')"></div>
+        </div>
+        <div class="control-row">
+          <label>Show Angles</label>
+          <div class="toggle" id="togAngles" onclick="toggleOption(this,'showAngles')"></div>
+        </div>
+        <div class="control-row">
+          <label>Mirror View</label>
+          <div class="toggle active" id="togMirror" onclick="toggleMirror(this)"></div>
+        </div>
+        <div class="slider-row">
+          <div class="label-row"><span>Min Confidence</span><span id="confVal">0.5</span></div>
+          <input type="range" min="0.1" max="0.95" step="0.05" value="0.5" oninput="updateConfidence(this.value)">
+        </div>
+        <div class="slider-row">
+          <div class="label-row"><span>Send Rate</span><span id="rateVal">30 fps</span></div>
+          <input type="range" min="5" max="60" step="5" value="30" oninput="updateRate(this.value)">
+        </div>
+        <div class="slider-row">
+          <div class="label-row"><span>Smoothing</span><span id="smoothVal">0.5</span></div>
+          <input type="range" min="0" max="0.9" step="0.1" value="0.5" oninput="updateSmoothing(this.value)">
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Data -->
+    <div class="sidebar-section">
+      <h3>📡 Live Data Stream</h3>
+      <div class="data-stream" id="dataStream">
+        <div class="stream-line" style="color:var(--text-dim)">Waiting for pose data...</div>
+      </div>
+    </div>
+
+    <!-- Record -->
+    <div class="sidebar-section">
+      <h3>⏺ Recording</h3>
+      <button class="btn-record" id="btnRecord" onclick="toggleRecording()">
+        <div class="rec-dot"></div> Record Session
+      </button>
+      <button class="btn-export" onclick="exportData()">↓ Export JSON</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════
+const state = {
+  showSkeleton: true,
+  showJoints: true,
+  showAngles: false,
+  minConfidence: 0.5,
+  sendRate: 30,
+  smoothing: 0.5,
+  isRunning: false,
+  isConnected: false,
+  isRecording: false,
+  personDetected: false,
+  currentLandmarks: null,
+  previousLandmarks: null,
+  recordedFrames: [],
+  fps: 0,
+};
+
+let ws = null;
+let sendInterval = null;
+let frameCount = 0;
+let lastFpsTime = performance.now();
+
+// ═══════════════════════════════════════════
+//  JOINT DEFINITIONS
+// ═══════════════════════════════════════════
+const JOINT_NAMES = [
+  'nose','left_eye_inner','left_eye','left_eye_outer','right_eye_inner',
+  'right_eye','right_eye_outer','left_ear','right_ear','mouth_left',
+  'mouth_right','left_shoulder','right_shoulder','left_elbow','right_elbow',
+  'left_wrist','right_wrist','left_pinky','right_pinky','left_index',
+  'right_index','left_thumb','right_thumb','left_hip','right_hip',
+  'left_knee','right_knee','left_ankle','right_ankle','left_heel',
+  'right_heel','left_foot_index','right_foot_index'
+];
+
+const BONES = [
+  [11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],
+  [23,25],[25,27],[24,26],[26,28],[15,17],[15,19],[15,21],[16,18],
+  [16,20],[16,22],[27,29],[29,31],[28,30],[30,32],
+  [0,1],[1,2],[2,3],[3,7],[0,4],[4,5],[5,6],[6,8],[9,10]
+];
+
+const KEY_JOINTS = [
+  {i:0,name:'Head'},{i:11,name:'L.Shoulder'},{i:12,name:'R.Shoulder'},
+  {i:13,name:'L.Elbow'},{i:14,name:'R.Elbow'},{i:15,name:'L.Wrist'},
+  {i:16,name:'R.Wrist'},{i:23,name:'L.Hip'},{i:24,name:'R.Hip'},
+  {i:25,name:'L.Knee'},{i:26,name:'R.Knee'},{i:27,name:'L.Ankle'},
+  {i:28,name:'R.Ankle'},{i:31,name:'L.Foot'},{i:32,name:'R.Foot'}
+];
+
+// Build joint map UI
+const jointMapEl = document.getElementById('jointMap');
+KEY_JOINTS.forEach(j => {
+  const el = document.createElement('div');
+  el.className = 'joint-item';
+  el.id = `joint-${j.i}`;
+  el.innerHTML = `<div class="joint-dot"></div>${j.name}`;
+  jointMapEl.appendChild(el);
+});
+
+// ═══════════════════════════════════════════
+//  MEDIAPIPE SETUP
+// ═══════════════════════════════════════════
+const videoEl = document.getElementById('webcam');
+const canvasEl = document.getElementById('poseCanvas');
+const ctx = canvasEl.getContext('2d');
+
+const pose = new Pose({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+});
+
+pose.setOptions({
+  modelComplexity: 1,
+  smoothLandmarks: true,
+  enableSegmentation: false,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5,
+});
+
+pose.onResults(onPoseResults);
+
+// ═══════════════════════════════════════════
+//  POSE RESULTS HANDLER
+// ═══════════════════════════════════════════
+function onPoseResults(results) {
+  // FPS
+  frameCount++;
+  const now = performance.now();
+  if (now - lastFpsTime >= 1000) {
+    state.fps = frameCount;
+    frameCount = 0;
+    lastFpsTime = now;
+    document.getElementById('fpsCounter').textContent = `${state.fps} FPS`;
+  }
+
+  // Resize canvas
+  canvasEl.width = results.image.width;
+  canvasEl.height = results.image.height;
+  ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+
+  if (results.poseLandmarks) {
+    state.personDetected = true;
+    document.getElementById('noPerson').style.display = 'none';
+    document.getElementById('poseDot').className = 'status-dot active';
+    document.getElementById('poseStatus').textContent = 'Tracking';
+
+    // Smooth landmarks
+    const raw = results.poseLandmarks;
+    if (state.previousLandmarks && state.smoothing > 0) {
+      state.currentLandmarks = raw.map((lm, i) => ({
+        x: lerp(state.previousLandmarks[i].x, lm.x, 1 - state.smoothing),
+        y: lerp(state.previousLandmarks[i].y, lm.y, 1 - state.smoothing),
+        z: lerp(state.previousLandmarks[i].z, lm.z, 1 - state.smoothing),
+        visibility: lm.visibility
+      }));
+    } else {
+      state.currentLandmarks = raw.map(lm => ({...lm}));
+    }
+    state.previousLandmarks = state.currentLandmarks.map(lm => ({...lm}));
+
+    const lm = state.currentLandmarks;
+    const w = canvasEl.width;
+    const h = canvasEl.height;
+
+    // Draw bones
+    if (state.showSkeleton) {
+      BONES.forEach(([a, b]) => {
+        if (lm[a].visibility > state.minConfidence && lm[b].visibility > state.minConfidence) {
+          const isFace = a <= 10 && b <= 10;
+          ctx.beginPath();
+          ctx.moveTo(lm[a].x * w, lm[a].y * h);
+          ctx.lineTo(lm[b].x * w, lm[b].y * h);
+          ctx.strokeStyle = isFace ? 'rgba(170,85,255,0.6)' : 'rgba(0,229,255,0.8)';
+          ctx.lineWidth = isFace ? 1.5 : 3;
+          ctx.shadowColor = isFace ? 'rgba(170,85,255,0.3)' : 'rgba(0,229,255,0.4)';
+          ctx.shadowBlur = 8;
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+        }
+      });
+    }
+
+    // Draw joints
+    if (state.showJoints) {
+      lm.forEach((point, i) => {
+        if (point.visibility > state.minConfidence) {
+          const isFace = i <= 10;
+          const isHand = (i >= 17 && i <= 22);
+          const r = isFace ? 3 : isHand ? 4 : 6;
+          const color = isFace ? 'rgba(170,85,255,0.8)' : 'rgba(255,0,170,0.9)';
+
+          ctx.beginPath();
+          ctx.arc(point.x * w, point.y * h, r, 0, 2 * Math.PI);
+          ctx.fillStyle = color;
+          ctx.shadowColor = color;
+          ctx.shadowBlur = 10;
+          ctx.fill();
+          ctx.shadowBlur = 0;
+
+          // Outer ring for key joints
+          if (!isFace && !isHand) {
+            ctx.beginPath();
+            ctx.arc(point.x * w, point.y * h, r + 3, 0, 2 * Math.PI);
+            ctx.strokeStyle = 'rgba(255,0,170,0.3)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+        }
+      });
+    }
+
+    // Draw angles
+    if (state.showAngles) {
+      drawAngle(lm, 11, 13, 15, w, h, 'L.Elbow');
+      drawAngle(lm, 12, 14, 16, w, h, 'R.Elbow');
+      drawAngle(lm, 23, 25, 27, w, h, 'L.Knee');
+      drawAngle(lm, 24, 26, 28, w, h, 'R.Knee');
+      drawAngle(lm, 13, 11, 23, w, h, 'L.Shoulder');
+      drawAngle(lm, 14, 12, 24, w, h, 'R.Shoulder');
+    }
+
+    // Update joint map
+    KEY_JOINTS.forEach(j => {
+      const el = document.getElementById(`joint-${j.i}`);
+      if (lm[j.i].visibility > state.minConfidence) {
+        el.classList.add('tracked');
+      } else {
+        el.classList.remove('tracked');
+      }
+    });
+
+    // Update data stream
+    updateDataStream(lm);
+
+    // Record
+    if (state.isRecording) {
+      state.recordedFrames.push({
+        timestamp: Date.now(),
+        landmarks: lm.map(p => ({
+          x: +p.x.toFixed(4), y: +p.y.toFixed(4),
+          z: +p.z.toFixed(4), v: +p.visibility.toFixed(2)
+        }))
+      });
+    }
+  } else {
+    state.personDetected = false;
+    state.currentLandmarks = null;
+    document.getElementById('noPerson').style.display = 'block';
+    document.getElementById('poseDot').className = 'status-dot warn';
+    document.getElementById('poseStatus').textContent = 'No Pose';
+
+    KEY_JOINTS.forEach(j => {
+      document.getElementById(`joint-${j.i}`).classList.remove('tracked');
+    });
+  }
+}
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function drawAngle(lm, a, b, c, w, h, label) {
+  if (lm[a].visibility < state.minConfidence || lm[b].visibility < state.minConfidence || lm[c].visibility < state.minConfidence) return;
+  const angle = calcAngle(lm[a], lm[b], lm[c]);
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.font = '11px JetBrains Mono';
+  ctx.fillText(`${Math.round(angle)}°`, lm[b].x * w + 10, lm[b].y * h - 5);
+}
+
+function calcAngle(a, b, c) {
+  const ab = { x: a.x - b.x, y: a.y - b.y };
+  const cb = { x: c.x - b.x, y: c.y - b.y };
+  const dot = ab.x * cb.x + ab.y * cb.y;
+  const magAB = Math.sqrt(ab.x * ab.x + ab.y * ab.y);
+  const magCB = Math.sqrt(cb.x * cb.x + cb.y * cb.y);
+  return Math.acos(dot / (magAB * magCB)) * (180 / Math.PI);
+}
+
+function updateDataStream(lm) {
+  const stream = document.getElementById('dataStream');
+  const entries = [
+    { k: 'nose', v: `${lm[0].x.toFixed(3)}, ${lm[0].y.toFixed(3)}` },
+    { k: 'l_wrist', v: `${lm[15].x.toFixed(3)}, ${lm[15].y.toFixed(3)}` },
+    { k: 'r_wrist', v: `${lm[16].x.toFixed(3)}, ${lm[16].y.toFixed(3)}` },
+    { k: 'l_hip', v: `${lm[23].x.toFixed(3)}, ${lm[23].y.toFixed(3)}` },
+    { k: 'r_hip', v: `${lm[24].x.toFixed(3)}, ${lm[24].y.toFixed(3)}` },
+  ];
+  stream.innerHTML = entries.map(e =>
+    `<div class="stream-line"><span class="key">${e.k}</span>: <span class="val">${e.v}</span></div>`
+  ).join('');
+}
+
+// ═══════════════════════════════════════════
+//  WEBSOCKET — UNREAL ENGINE BRIDGE
+// ═══════════════════════════════════════════
+function toggleWebSocket() {
+  if (state.isConnected) {
+    ws.close();
+    return;
+  }
+
+  const url = document.getElementById('wsUrl').value;
+  try {
+    ws = new WebSocket(url);
+
+    ws.onopen = () => {
+      state.isConnected = true;
+      document.getElementById('wsDot').className = 'status-dot active';
+      document.getElementById('wsStatus').textContent = 'UE Connected';
+      document.getElementById('btnConnect').textContent = 'Disconnect';
+      document.getElementById('btnConnect').classList.add('connected');
+      startSending();
+    };
+
+    ws.onclose = () => {
+      state.isConnected = false;
+      document.getElementById('wsDot').className = 'status-dot error';
+      document.getElementById('wsStatus').textContent = 'UE Disconnected';
+      document.getElementById('btnConnect').textContent = 'Connect';
+      document.getElementById('btnConnect').classList.remove('connected');
+      stopSending();
+    };
+
+    ws.onerror = () => {
+      document.getElementById('wsDot').className = 'status-dot error';
+      document.getElementById('wsStatus').textContent = 'UE Error';
+    };
+  } catch (e) {
+    console.error('WebSocket error:', e);
+  }
+}
+
+function startSending() {
+  stopSending();
+  sendInterval = setInterval(() => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    if (state.personDetected && state.currentLandmarks) {
+      // Build Unreal-friendly payload with world-space landmarks
+      // and computed bone rotations
+      const payload = {
+        type: 'pose',
+        idle: false,
+        timestamp: Date.now(),
+        fps: state.fps,
+        landmarks: state.currentLandmarks.map((lm, i) => ({
+          id: i,
+          name: JOINT_NAMES[i],
+          x: +lm.x.toFixed(5),
+          y: +lm.y.toFixed(5),
+          z: +lm.z.toFixed(5),
+          visibility: +lm.visibility.toFixed(3)
+        })),
+        // Pre-computed bone rotations for common UE skeleton mappings
+        bones: computeBoneData(state.currentLandmarks),
+      };
+      ws.send(JSON.stringify(payload));
+    } else {
+      // Send idle signal so UE can switch to idle animation
+      ws.send(JSON.stringify({
+        type: 'pose',
+        idle: true,
+        timestamp: Date.now(),
+      }));
+    }
+  }, 1000 / state.sendRate);
+}
+
+function stopSending() {
+  if (sendInterval) { clearInterval(sendInterval); sendInterval = null; }
+}
+
+function computeBoneData(lm) {
+  // Compute useful derived data for Unreal Engine
+  const midShoulder = {
+    x: (lm[11].x + lm[12].x) / 2,
+    y: (lm[11].y + lm[12].y) / 2,
+    z: (lm[11].z + lm[12].z) / 2,
+  };
+  const midHip = {
+    x: (lm[23].x + lm[24].x) / 2,
+    y: (lm[23].y + lm[24].y) / 2,
+    z: (lm[23].z + lm[24].z) / 2,
+  };
+
+  return {
+    spine_tilt: Math.atan2(midShoulder.x - midHip.x, midShoulder.y - midHip.y) * (180/Math.PI),
+    shoulder_width: Math.abs(lm[11].x - lm[12].x),
+    hip_width: Math.abs(lm[23].x - lm[24].x),
+    head_tilt: (lm[0].x - midShoulder.x) * 100,
+    left_elbow_angle: safeAngle(lm[11], lm[13], lm[15]),
+    right_elbow_angle: safeAngle(lm[12], lm[14], lm[16]),
+    left_knee_angle: safeAngle(lm[23], lm[25], lm[27]),
+    right_knee_angle: safeAngle(lm[24], lm[26], lm[28]),
+    left_shoulder_angle: safeAngle(lm[13], lm[11], lm[23]),
+    right_shoulder_angle: safeAngle(lm[14], lm[12], lm[24]),
+    left_hip_angle: safeAngle(lm[11], lm[23], lm[25]),
+    right_hip_angle: safeAngle(lm[12], lm[24], lm[26]),
+    torso_center: midShoulder,
+    hip_center: midHip,
+  };
+}
+
+function safeAngle(a, b, c) {
+  try { return +calcAngle(a, b, c).toFixed(1); }
+  catch { return 0; }
+}
+
+// ═══════════════════════════════════════════
+//  CONTROLS
+// ═══════════════════════════════════════════
+function toggleOption(el, key) {
+  state[key] = !state[key];
+  el.classList.toggle('active', state[key]);
+}
+
+function toggleMirror(el) {
+  const mirrored = el.classList.toggle('active');
+  const scale = mirrored ? 'scaleX(-1)' : 'scaleX(1)';
+  videoEl.style.transform = scale;
+  canvasEl.style.transform = scale;
+}
+
+function updateConfidence(val) {
+  state.minConfidence = parseFloat(val);
+  document.getElementById('confVal').textContent = val;
+}
+
+function updateRate(val) {
+  state.sendRate = parseInt(val);
+  document.getElementById('rateVal').textContent = val + ' fps';
+  document.getElementById('sendRateLabel').textContent = val;
+  if (state.isConnected) startSending(); // restart with new rate
+}
+
+function updateSmoothing(val) {
+  state.smoothing = parseFloat(val);
+  document.getElementById('smoothVal').textContent = val;
+}
+
+function toggleRecording() {
+  state.isRecording = !state.isRecording;
+  const btn = document.getElementById('btnRecord');
+  if (state.isRecording) {
+    state.recordedFrames = [];
+    btn.classList.add('recording');
+    btn.innerHTML = '<div class="rec-dot"></div> Recording...';
+  } else {
+    btn.classList.remove('recording');
+    btn.innerHTML = `<div class="rec-dot"></div> Record (${state.recordedFrames.length} frames)`;
+  }
+}
+
+function exportData() {
+  if (state.recordedFrames.length === 0) { alert('No frames recorded yet.'); return; }
+  const blob = new Blob([JSON.stringify({
+    version: '1.0',
+    source: 'MoCap Studio',
+    jointNames: JOINT_NAMES,
+    frameCount: state.recordedFrames.length,
+    frames: state.recordedFrames,
+  }, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `mocap-session-${Date.now()}.json`;
+  a.click();
+}
+
+// ═══════════════════════════════════════════
+//  START CAMERA
+// ═══════════════════════════════════════════
+document.getElementById('startBtn').addEventListener('click', async () => {
+  document.getElementById('startOverlay').classList.add('hidden');
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
+    });
+    videoEl.srcObject = stream;
+    await videoEl.play();
+
+    document.getElementById('camDot').className = 'status-dot active';
+    document.getElementById('camStatus').textContent = 'Camera Live';
+    state.isRunning = true;
+
+    // Start pose detection loop
+    async function detect() {
+      if (!state.isRunning) return;
+      await pose.send({ image: videoEl });
+      requestAnimationFrame(detect);
+    }
+    detect();
+  } catch (err) {
+    console.error('Camera error:', err);
+    document.getElementById('camDot').className = 'status-dot error';
+    document.getElementById('camStatus').textContent = 'Camera Error';
+    document.getElementById('startOverlay').classList.remove('hidden');
+    alert('Could not access camera. Please allow camera permission and try again.');
+  }
+});
+</script>
+</body>
+</html>
