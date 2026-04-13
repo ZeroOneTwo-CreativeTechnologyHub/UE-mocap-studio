@@ -422,26 +422,25 @@ Open the **Event Graph** tab in the Animation Blueprint.
 
 From **Event Blueprint Update Animation:**
 
-1. Drag from the white execution pin on **Event Blueprint Update Animation** and release in empty space. A search menu appears. Type `Get All Actors of Class` and select it. This is a global function, not a method on any actor, so you must start from empty space or an execution pin, not from another node's data output.
+1. Drag from the white execution pin on **Event Blueprint Update Animation** and release in empty space. A search menu appears. Type `Get All Actors of Class` and select it. This is a global function, so you must search from empty space or an execution pin, not from another node's data output.
 2. On the **Get All Actors of Class** node, click the **Actor Class** dropdown and type `MoCapWebSocket`. Select it.
-3. Drag from the **Out Actors** pin and type `Get`. Select **Get (a copy)**. Leave the index at 0.
-4. Drag from the output of the Get node and type `Cast to MoCapWebSocket`. This gives you a typed reference with access to all the pose data.
-5. Drag your `MoCapSocket` variable from the My Blueprint panel into the graph and select **Set**. Connect the cast output (the blue "As MoCap Web Socket" pin) into the Set node. Connect the execution pin from the Cast node to the Set node.
-6. Now read the data: drag `MoCapSocket` into the graph again (select **Get** this time). From it, pull off:
-   - **Get bIsIdle** and wire it into a **Set bIsIdle** node for your local variable.
-   - **Get BoneAngles** and wire it into a **Set BoneAngles** node for your local variable.
+3. Drag from the **Out Actors** pin and type `Get`. Select **Get (a copy)**. Leave the index at 0. This gets the first (and usually only) MoCapWebSocket actor in the level.
+4. Drag your `MoCapSocket` variable from the **My Blueprint** panel into the graph and select **Set**. Connect the blue output pin from the Get node into the blue input pin on the Set node. Unreal will accept the connection automatically. Connect the white execution pin from **Get All Actors of Class** to the **Set MoCapSocket** node.
+5. Now read the pose data. Drag `MoCapSocket` into the graph again (select **Get** this time). Drag off it and type `bIsIdle`. Select **Get bIsIdle**. Wire this into a **Set bIsIdle** node for your local variable.
+6. Drag off `MoCapSocket` again and type `BoneAngles`. Select **Get BoneAngles**. Wire this into a **Set BoneAngles** node for your local variable.
+7. Chain all the white execution pins together in order.
 
 The complete chain looks like this:
 
 ```
 Event Blueprint Update Animation
   > Get All Actors of Class (MoCapWebSocket)
-  > Get [0]
-  > Cast to MoCapWebSocket
-  > Set MoCapSocket
+  > Set MoCapSocket (from Get[0])
   > Set bIsIdle (from MoCapSocket.bIsIdle)
   > Set BoneAngles (from MoCapSocket.BoneAngles)
 ```
+
+**If the blue wire won't connect** between the Get node and the Set MoCapSocket node, it means the variable type does not match. Select your `MoCapSocket` variable in the My Blueprint panel, check the Details panel, and confirm the Variable Type is set to `MoCap Web Socket` with **Object Reference** (not Class Reference). If it was set to a different type, change it, recompile, and try wiring again.
 
 This runs every tick, keeping the animation data in sync with the latest pose from the camera.
 
